@@ -1,0 +1,14 @@
+{
+  "name": "service-management-system",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=server",
+    "test": "npm test --workspace=server",
+    "dev": "npm run dev --workspace=server"
+  }
+}

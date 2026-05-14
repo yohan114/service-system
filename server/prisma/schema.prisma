@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  role      String   @default("STAFF") // ADMIN, STAFF, CASHIER
+  name      String
+  email     String?
+  createdAt DateTime @default(now())
+
+  serviceJobs ServiceJob[]
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vehicles    Vehicle[]
+  serviceJobs ServiceJob[]
+}
+
+model Vehicle {
+  id                 Int      @id @default(autoincrement())
+  customerId         Int
+  registrationNumber String
+  model              String?
+  brand              String?
+  year               Int?
+  mileageOrHours     Float?
+  type               String   @default("VEHICLE") // VEHICLE, EQUIPMENT
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  serviceJobs ServiceJob[]
+}
+
+model ServiceJob {
+  id            Int      @id @default(autoincrement())
+  jobNumber     String   @unique
+  customerId    Int
+  vehicleId     Int
+  serviceDate   DateTime @default(now())
+  serviceType   String?
+  technicianId  Int?
+  status        String   @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, DELIVERED, CANCELLED
+  notes         String?
+  subtotal      Float    @default(0)
+  discount      Float    @default(0)
+  taxRate       Float    @default(0)
+  taxAmount     Float    @default(0)
+  totalAmount   Float    @default(0)
+  paidAmount    Float    @default(0)
+  balanceAmount Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer   Customer      @relation(fields: [customerId], references: [id])
+  vehicle    Vehicle       @relation(fields: [vehicleId], references: [id])
+  technician User?         @relation(fields: [technicianId], references: [id])
+  items      ServiceItem[]
+  invoices   Invoice[]
+}
+
+model ServiceItem {
+  id              Int    @id @default(autoincrement())
+  serviceJobId    Int
+  name            String
+  category        String @default("OTHER") // LABOR, FILTER, OIL, SPARE_PART, OTHER
+  quantity         Float  @default(1)
+  unitPrice       Float  @default(0)
+  totalPrice      Float  @default(0)
+  inventoryItemId Int?
+
+  serviceJob    ServiceJob     @relation(fields: [serviceJobId], references: [id])
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+}
+
+model InventoryItem {
+  id           Int      @id @default(autoincrement())
+  name         String
+  category     String   @default("OTHER") // FILTER, OIL, SPARE_PART, OTHER
+  quantity     Float    @default(0)
+  unitPrice    Float    @default(0)
+  reorderLevel Float    @default(0)
+  unit         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  serviceItems ServiceItem[]
+}
+
+model Invoice {
+  id            Int      @id @default(autoincrement())
+  invoiceNumber String   @unique
+  serviceJobId  Int
+  issuedDate    DateTime @default(now())
+  dueDate       DateTime?
+  status        String   @default("DRAFT") // DRAFT, ISSUED, PAID, OVERDUE
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  serviceJob ServiceJob @relation(fields: [serviceJobId], references: [id])
+}
