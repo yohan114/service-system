@@ -208,15 +208,18 @@ router.delete('/:jobId/items/:itemId', requireRole('ADMIN', 'STAFF'), async (req
       return;
     }
 
-    // Restore inventory if linked
+    // Restore inventory and delete item in a transaction for consistency
     if (existing.inventoryItemId) {
-      await prisma.inventoryItem.update({
-        where: { id: existing.inventoryItemId },
-        data: { quantity: { increment: existing.quantity } },
+      await prisma.$transaction(async (tx) => {
+        await tx.inventoryItem.update({
+          where: { id: existing.inventoryItemId! },
+          data: { quantity: { increment: existing.quantity } },
+        });
+        await tx.serviceItem.delete({ where: { id: itemId } });
       });
+    } else {
+      await prisma.serviceItem.delete({ where: { id: itemId } });
     }
-
-    await prisma.serviceItem.delete({ where: { id: itemId } });
 
     await recalculateJobTotals(jobId);
 

@@ -36,6 +36,9 @@ export default function UserForm({ user, onClose }: UserFormProps) {
     mutationFn: (data: FormData) => {
       const payload: any = { ...data };
       if (!payload.password) delete payload.password;
+      if (user) {
+        return api.put(`/users/${user.id}`, payload);
+      }
       return api.post('/auth/register', payload);
     },
     onSuccess: () => {
