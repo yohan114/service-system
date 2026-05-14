@@ -29,20 +29,27 @@ router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
     const todaysRevenue = todaysJobs.reduce((sum, j) => sum + j.paidAmount, 0);
 
     const lowStockItems = await prisma.$queryRaw`
-      SELECT * FROM InventoryItem WHERE quantity <= reorderLevel
-    ` as unknown[];
+      SELECT id, name, category, quantity, reorderLevel FROM InventoryItem WHERE quantity <= reorderLevel
+    ` as { id: number; name: string; category: string; quantity: number; reorderLevel: number }[];
 
     const totalCustomers = await prisma.customer.count();
     const totalVehicles = await prisma.vehicle.count();
 
+    const recentJobs = await prisma.serviceJob.findMany({
+      include: { customer: true },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+
     res.json({
       today: startOfDay.toISOString().split('T')[0],
-      totalJobsToday,
+      todaysJobs: totalJobsToday,
       pendingJobs,
       inProgressJobs,
       completedJobs,
-      todaysRevenue: Math.round(todaysRevenue * 100) / 100,
-      lowStockItems: (lowStockItems as unknown[]).length,
+      revenue: Math.round(todaysRevenue * 100) / 100,
+      lowStockItems,
+      recentJobs,
       totalCustomers,
       totalVehicles,
     });

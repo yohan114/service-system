@@ -1,7 +1,9 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
+import { calculateJobTotals } from '../utils/calculations.js';
+import crypto from 'crypto';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -9,9 +11,16 @@ const prisma = new PrismaClient();
 router.use(authenticate);
 
 async function generateJobNumber(): Promise<string> {
-  const count = await prisma.serviceJob.count();
-  const number = (count + 1).toString().padStart(5, '0');
-  return `JOB-${number}`;
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const suffix = crypto.randomBytes(2).toString('hex').toUpperCase();
+  const jobNumber = `JOB-${timestamp}-${suffix}`;
+
+  // Verify uniqueness (retry if collision)
+  const existing = await prisma.serviceJob.findUnique({ where: { jobNumber } });
+  if (existing) {
+    return generateJobNumber();
+  }
+  return jobNumber;
 }
 
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
@@ -65,6 +74,7 @@ router.get('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
 router.post(
   '/',
+  requireRole('ADMIN', 'STAFF'),
   [
     body('customerId').isInt().withMessage('Customer ID is required'),
     body('vehicleId').isInt().withMessage('Vehicle ID is required'),
@@ -102,7 +112,7 @@ router.post(
   }
 );
 
-router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
+router.put('/:id', requireRole('ADMIN', 'STAFF'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { status, serviceType, technicianId, notes, discount, taxRate, paidAmount } = req.body;
 
@@ -127,18 +137,15 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
 
     // Recalculate totals if financial fields changed
     if (discount !== undefined || taxRate !== undefined || paidAmount !== undefined) {
-      const subtotal = existing.items.reduce((sum, item) => sum + item.totalPrice, 0);
       const newDiscount = discount !== undefined ? discount : existing.discount;
       const newTaxRate = taxRate !== undefined ? taxRate : existing.taxRate;
       const newPaidAmount = paidAmount !== undefined ? paidAmount : existing.paidAmount;
-      const taxAmount = Math.round(subtotal * (newTaxRate / 100) * 100) / 100;
-      const totalAmount = Math.round((subtotal + taxAmount - newDiscount) * 100) / 100;
-      const balanceAmount = Math.round((totalAmount - newPaidAmount) * 100) / 100;
 
-      updateData.subtotal = subtotal;
-      updateData.taxAmount = taxAmount;
-      updateData.totalAmount = totalAmount;
-      updateData.balanceAmount = balanceAmount;
+      const totals = calculateJobTotals(existing.items, newDiscount, newTaxRate, newPaidAmount);
+      updateData.subtotal = totals.subtotal;
+      updateData.taxAmount = totals.taxAmount;
+      updateData.totalAmount = totals.totalAmount;
+      updateData.balanceAmount = totals.balanceAmount;
     }
 
     const job = await prisma.serviceJob.update({
@@ -153,7 +160,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 });
 
-router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
+router.delete('/:id', requireRole('ADMIN'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     await prisma.serviceJob.delete({
       where: { id: parseInt(req.params.id) },

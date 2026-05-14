@@ -2,11 +2,24 @@ import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
 import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
+import crypto from 'crypto';
 
 const router = Router();
 const prisma = new PrismaClient();
 
 router.use(authenticate);
+
+async function generateInvoiceNumber(): Promise<string> {
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const suffix = crypto.randomBytes(2).toString('hex').toUpperCase();
+  const invoiceNumber = `INV-${timestamp}-${suffix}`;
+
+  const existing = await prisma.invoice.findUnique({ where: { invoiceNumber } });
+  if (existing) {
+    return generateInvoiceNumber();
+  }
+  return invoiceNumber;
+}
 
 router.get('/', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -76,8 +89,7 @@ router.post(
         return;
       }
 
-      const count = await prisma.invoice.count();
-      const invoiceNumber = `INV-${(count + 1).toString().padStart(5, '0')}`;
+      const invoiceNumber = await generateInvoiceNumber();
 
       const invoice = await prisma.invoice.create({
         data: {

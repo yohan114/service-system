@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 import { calculateItemTotal, calculateJobTotals } from '../utils/calculations.js';
 
 const router = Router();
@@ -27,6 +27,7 @@ async function recalculateJobTotals(jobId: number): Promise<void> {
 
 router.post(
   '/:jobId/items',
+  requireRole('ADMIN', 'STAFF'),
   [
     body('name').notEmpty().withMessage('Name is required'),
     body('quantity').isFloat({ min: 0.01 }).withMessage('Quantity must be positive'),
@@ -51,50 +52,72 @@ router.post(
 
       const totalPrice = calculateItemTotal(quantity, unitPrice);
 
-      // Auto-deduct inventory if linked
       if (inventoryItemId) {
-        const inventoryItem = await prisma.inventoryItem.findUnique({
-          where: { id: inventoryItemId },
+        // Wrap inventory check + deduction + item creation in a transaction
+        const item = await prisma.$transaction(async (tx) => {
+          const inventoryItem = await tx.inventoryItem.findUnique({
+            where: { id: inventoryItemId },
+          });
+
+          if (!inventoryItem) {
+            throw new Error('INVENTORY_NOT_FOUND');
+          }
+
+          if (inventoryItem.quantity < quantity) {
+            throw new Error('INSUFFICIENT_INVENTORY');
+          }
+
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: { quantity: inventoryItem.quantity - quantity },
+          });
+
+          return tx.serviceItem.create({
+            data: {
+              serviceJobId: jobId,
+              name,
+              category: category || 'OTHER',
+              quantity,
+              unitPrice,
+              totalPrice,
+              inventoryItemId,
+            },
+          });
         });
 
-        if (!inventoryItem) {
-          res.status(404).json({ error: 'Inventory item not found' });
-          return;
-        }
-
-        if (inventoryItem.quantity < quantity) {
-          res.status(400).json({ error: 'Insufficient inventory quantity' });
-          return;
-        }
-
-        await prisma.inventoryItem.update({
-          where: { id: inventoryItemId },
-          data: { quantity: inventoryItem.quantity - quantity },
+        await recalculateJobTotals(jobId);
+        res.status(201).json(item);
+      } else {
+        const item = await prisma.serviceItem.create({
+          data: {
+            serviceJobId: jobId,
+            name,
+            category: category || 'OTHER',
+            quantity,
+            unitPrice,
+            totalPrice,
+            inventoryItemId: null,
+          },
         });
+
+        await recalculateJobTotals(jobId);
+        res.status(201).json(item);
       }
-
-      const item = await prisma.serviceItem.create({
-        data: {
-          serviceJobId: jobId,
-          name,
-          category: category || 'OTHER',
-          quantity,
-          unitPrice,
-          totalPrice,
-          inventoryItemId,
-        },
-      });
-
-      await recalculateJobTotals(jobId);
-
-      res.status(201).json(item);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.message === 'INVENTORY_NOT_FOUND') {
+        res.status(404).json({ error: 'Inventory item not found' });
+        return;
+      }
+      if (error?.message === 'INSUFFICIENT_INVENTORY') {
+        res.status(400).json({ error: 'Insufficient inventory quantity' });
+        return;
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
 
-router.put('/:jobId/items/:itemId', async (req: AuthRequest, res: Response): Promise<void> => {
+router.put('/:jobId/items/:itemId', requireRole('ADMIN', 'STAFF'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const jobId = parseInt(req.params.jobId);
     const itemId = parseInt(req.params.itemId);
@@ -110,26 +133,71 @@ router.put('/:jobId/items/:itemId', async (req: AuthRequest, res: Response): Pro
     const newUnitPrice = unitPrice !== undefined ? unitPrice : existing.unitPrice;
     const totalPrice = calculateItemTotal(newQuantity, newUnitPrice);
 
-    const item = await prisma.serviceItem.update({
-      where: { id: itemId },
-      data: {
-        name: name || existing.name,
-        category: category || existing.category,
-        quantity: newQuantity,
-        unitPrice: newUnitPrice,
-        totalPrice,
-      },
-    });
+    // If item is linked to inventory, adjust stock for quantity delta
+    if (existing.inventoryItemId && quantity !== undefined && quantity !== existing.quantity) {
+      await prisma.$transaction(async (tx) => {
+        const inventoryItem = await tx.inventoryItem.findUnique({
+          where: { id: existing.inventoryItemId! },
+        });
 
+        if (!inventoryItem) {
+          throw new Error('INVENTORY_NOT_FOUND');
+        }
+
+        // Restore old quantity, then deduct new quantity
+        const adjustedStock = inventoryItem.quantity + existing.quantity - newQuantity;
+
+        if (adjustedStock < 0) {
+          throw new Error('INSUFFICIENT_INVENTORY');
+        }
+
+        await tx.inventoryItem.update({
+          where: { id: existing.inventoryItemId! },
+          data: { quantity: adjustedStock },
+        });
+
+        await tx.serviceItem.update({
+          where: { id: itemId },
+          data: {
+            name: name || existing.name,
+            category: category || existing.category,
+            quantity: newQuantity,
+            unitPrice: newUnitPrice,
+            totalPrice,
+          },
+        });
+      });
+    } else {
+      await prisma.serviceItem.update({
+        where: { id: itemId },
+        data: {
+          name: name || existing.name,
+          category: category || existing.category,
+          quantity: newQuantity,
+          unitPrice: newUnitPrice,
+          totalPrice,
+        },
+      });
+    }
+
+    const item = await prisma.serviceItem.findUnique({ where: { id: itemId } });
     await recalculateJobTotals(jobId);
 
     res.json(item);
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message === 'INVENTORY_NOT_FOUND') {
+      res.status(404).json({ error: 'Inventory item not found' });
+      return;
+    }
+    if (error?.message === 'INSUFFICIENT_INVENTORY') {
+      res.status(400).json({ error: 'Insufficient inventory quantity' });
+      return;
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.delete('/:jobId/items/:itemId', async (req: AuthRequest, res: Response): Promise<void> => {
+router.delete('/:jobId/items/:itemId', requireRole('ADMIN', 'STAFF'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const jobId = parseInt(req.params.jobId);
     const itemId = parseInt(req.params.itemId);

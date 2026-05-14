@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { body, validationResult } from 'express-validator';
-import { authenticate, AuthRequest } from '../middleware/auth.js';
+import { authenticate, requireRole, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -91,7 +91,7 @@ router.put('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
   }
 });
 
-router.delete('/:id', async (req: AuthRequest, res: Response): Promise<void> => {
+router.delete('/:id', requireRole('ADMIN'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     await prisma.customer.delete({
       where: { id: parseInt(req.params.id) },

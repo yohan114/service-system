@@ -46,7 +46,7 @@ model Vehicle {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  customer    Customer     @relation(fields: [customerId], references: [id])
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   serviceJobs ServiceJob[]
 }
 
@@ -70,8 +70,8 @@ model ServiceJob {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  customer   Customer      @relation(fields: [customerId], references: [id])
-  vehicle    Vehicle       @relation(fields: [vehicleId], references: [id])
+  customer   Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vehicle    Vehicle       @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
   technician User?         @relation(fields: [technicianId], references: [id])
   items      ServiceItem[]
   invoices   Invoice[]
@@ -87,7 +87,7 @@ model ServiceItem {
   totalPrice      Float  @default(0)
   inventoryItemId Int?
 
-  serviceJob    ServiceJob     @relation(fields: [serviceJobId], references: [id])
+  serviceJob    ServiceJob     @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
   inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id])
 }
 
@@ -115,5 +115,5 @@ model Invoice {
   notes         String?
   createdAt     DateTime @default(now())
 
-  serviceJob ServiceJob @relation(fields: [serviceJobId], references: [id])
+  serviceJob ServiceJob @relation(fields: [serviceJobId], references: [id], onDelete: Cascade)
 }

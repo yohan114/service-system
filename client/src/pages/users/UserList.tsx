@@ -16,7 +16,7 @@ export default function UserList() {
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users'],
-    queryFn: () => api.get('/auth/me').then((r) => [r.data]),
+    queryFn: () => api.get('/users').then((r) => r.data),
   });
 
   const columns = [
